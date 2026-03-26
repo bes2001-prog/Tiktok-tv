@@ -29,10 +29,9 @@ jobs:
           echo "/opt/gradle-8.4/bin" >> $GITHUB_PATH
 
       - name: Decode keystore
-        run: |
-          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > $HOME/tiktoktv.keystore
+        run: echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > $HOME/tiktoktv.keystore
 
-      - name: Build signed APK
+      - name: Build signed release APK
         run: gradle assembleRelease
         env:
           ANDROID_HOME: /usr/local/lib/android/sdk
@@ -41,21 +40,8 @@ jobs:
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
 
-      - name: Sign APK with fixed keystore
-        run: |
-          UNSIGNED="app/build/outputs/apk/release/app-release-unsigned.apk"
-          SIGNED="app/build/outputs/apk/release/TikTokTV.apk"
-          # Sign with our fixed keystore
-          $ANDROID_HOME/build-tools/$(ls $ANDROID_HOME/build-tools/ | tail -1)/apksigner sign \
-            --ks $HOME/tiktoktv.keystore \
-            --ks-pass pass:albo2024tv \
-            --key-pass pass:albo2024tv \
-            --ks-key-alias tiktoktv \
-            --out $SIGNED \
-            $UNSIGNED
-          echo "Signed APK size: $(du -sh $SIGNED)"
-        env:
-          ANDROID_HOME: /usr/local/lib/android/sdk
+      - name: Rename APK
+        run: mv app/build/outputs/apk/release/app-release.apk app/build/outputs/apk/release/TikTokTV.apk
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
