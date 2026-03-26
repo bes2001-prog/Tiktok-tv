@@ -80,7 +80,6 @@ public class MainActivity extends Activity {
 
         // Cache
         settings.setCacheMode(WebSettings.LOAD_DEFAULT);
-        settings.setAppCacheEnabled(true);
 
         // Hardware acceleration for smooth video
         webView.setLayerType(View.LAYER_TYPE_HARDWARE, null);
