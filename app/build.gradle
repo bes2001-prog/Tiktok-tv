@@ -14,10 +14,19 @@ android {
         versionName "1.0"
     }
 
+    signingConfigs {
+        release {
+            storeFile file(System.getenv("KEYSTORE_PATH") ?: "tiktoktv.keystore")
+            storePassword System.getenv("KEY_STORE_PASSWORD") ?: "albo2024tv"
+            keyAlias System.getenv("KEY_ALIAS") ?: "tiktoktv"
+            keyPassword System.getenv("KEY_PASSWORD") ?: "albo2024tv"
+        }
+    }
+
     buildTypes {
         release {
             minifyEnabled false
-            signingConfig signingConfigs.debug
+            signingConfig signingConfigs.release
         }
     }
 
@@ -28,5 +37,4 @@ android {
 }
 
 dependencies {
-    // No external dependencies needed - pure Android WebView
 }
