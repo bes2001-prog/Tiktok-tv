@@ -18,10 +18,9 @@ public class MainActivity extends Activity {
     private WebView webView;
     private ProgressBar progressBar;
 
-    // TikTok mobile URL - loads the mobile layout which works well on TV
     private static final String TIKTOK_URL = "https://www.tiktok.com/foryou";
 
-    // Simulate a mobile browser so TikTok serves the proper vertical video UI
+    // Mobile user agent so TikTok serves the vertical video UI
     private static final String USER_AGENT =
         "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 " +
         "(KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36";
@@ -50,55 +49,52 @@ public class MainActivity extends Activity {
     private void setupWebView() {
         WebSettings settings = webView.getSettings();
 
-        // Enable JavaScript (required for TikTok)
         settings.setJavaScriptEnabled(true);
-
-        // Enable DOM storage for login sessions to persist
         settings.setDomStorageEnabled(true);
 
-        // Enable cookies so login is remembered
+        // Persist cookies so login is remembered between sessions
         CookieManager.getInstance().setAcceptCookie(true);
         CookieManager.getInstance().setAcceptThirdPartyCookies(webView, true);
 
-        // Mobile user agent so TikTok serves the vertical video UI
         settings.setUserAgentString(USER_AGENT);
-
-        // Media settings
         settings.setMediaPlaybackRequiresUserGesture(false);
         settings.setAllowFileAccess(true);
-
-        // Zoom
         settings.setSupportZoom(false);
         settings.setLoadWithOverviewMode(true);
         settings.setUseWideViewPort(true);
-
-        // Cache for better performance
         settings.setCacheMode(WebSettings.LOAD_DEFAULT);
 
-        // Hardware acceleration for video
         webView.setLayerType(View.LAYER_TYPE_HARDWARE, null);
 
         webView.setWebViewClient(new WebViewClient() {
             @Override
             public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
-                // Keep all navigation inside the WebView
                 String url = request.getUrl().toString();
+
+                // Block intent:// deep-links (cause ERR_UNKNOWN_URL_SCHEME crash)
+                if (url.startsWith("intent://") || url.startsWith("snssdk")) {
+                    return true; // swallow it, do nothing
+                }
+
+                // Allow TikTok and login pages, block everything else
                 if (url.startsWith("https://www.tiktok.com") ||
                     url.startsWith("https://m.tiktok.com") ||
-                    url.startsWith("https://accounts.tiktok.com")) {
-                    view.loadUrl(url);
-                    return true;
+                    url.startsWith("https://accounts.tiktok.com") ||
+                    url.startsWith("https://www.google.com") ||      // Google login
+                    url.startsWith("https://accounts.google.com") || // Google OAuth
+                    url.startsWith("https://appleid.apple.com")) {   // Apple login
+                    return false; // let WebView handle it normally
                 }
-                return false;
+
+                // Block all other external URLs
+                return true;
             }
 
             @Override
             public void onPageFinished(WebView view, String url) {
                 super.onPageFinished(view, url);
                 progressBar.setVisibility(View.GONE);
-
-                // Inject JS to make the page respond better to D-pad/remote
-                injectRemoteControlJS();
+                injectJS();
             }
         });
 
@@ -114,43 +110,78 @@ public class MainActivity extends Activity {
             }
         });
 
-        // Allow webview to get focus for key events
         webView.setFocusable(true);
         webView.setFocusableInTouchMode(true);
         webView.requestFocus();
     }
 
-    /**
-     * Inject JavaScript to map D-pad UP/DOWN to TikTok's swipe gestures.
-     * UP = previous video, DOWN = next video.
-     */
-    private void injectRemoteControlJS() {
+    private void injectJS() {
         String js = "javascript:(function() {" +
             "if (window.__alboTVInjected) return;" +
             "window.__alboTVInjected = true;" +
 
-            // Helper: simulate a vertical swipe (touch events)
+            // --- Block the "Get the full app experience" popup ---
+            // Hide it immediately and keep watching for it
+            "function blockAppPopup() {" +
+            "  var selectors = [" +
+            "    '[class*=\"AppPromo\"]'," +
+            "    '[class*=\"app-promo\"]'," +
+            "    '[class*=\"modal\"]'," +
+            "    '[class*=\"Modal\"]'," +
+            "    '[class*=\"dialog\"]'," +
+            "    '[class*=\"Dialog\"]'," +
+            "    '[class*=\"download\"]'," +
+            "    '[class*=\"Download\"]'," +
+            "    '[class*=\"banner\"]'" +
+            "  ];" +
+            "  selectors.forEach(function(sel) {" +
+            "    document.querySelectorAll(sel).forEach(function(el) {" +
+            "      var txt = el.innerText || '';" +
+            "      if (txt.indexOf('Open TikTok') >= 0 || txt.indexOf('full app') >= 0 || txt.indexOf('Get the') >= 0) {" +
+            "        el.style.display = 'none';" +
+            "      }" +
+            "    });" +
+            "  });" +
+            // Also click 'Not now' or X buttons automatically
+            "  document.querySelectorAll('button, [role=\"button\"]').forEach(function(btn) {" +
+            "    var t = btn.innerText || btn.getAttribute('aria-label') || '';" +
+            "    if (t.indexOf('Not now') >= 0 || t.indexOf('not now') >= 0) {" +
+            "      btn.click();" +
+            "    }" +
+            "  });" +
+            "}" +
+
+            // Run on load and keep checking every 2 seconds
+            "blockAppPopup();" +
+            "setInterval(blockAppPopup, 2000);" +
+
+            // Also use MutationObserver to catch popups as they appear
+            "var observer = new MutationObserver(function() { blockAppPopup(); });" +
+            "observer.observe(document.body, { childList: true, subtree: true });" +
+
+            // --- D-pad swipe simulation ---
             "function simulateSwipe(startY, endY) {" +
             "  var el = document.elementFromPoint(window.innerWidth/2, window.innerHeight/2);" +
             "  if (!el) el = document.body;" +
-            "  var t = new Date().getTime();" +
-            "  var touch1 = new Touch({identifier: t, target: el, clientX: window.innerWidth/2, clientY: startY, pageX: window.innerWidth/2, pageY: startY});" +
-            "  el.dispatchEvent(new TouchEvent('touchstart', {touches:[touch1], changedTouches:[touch1], bubbles:true}));" +
-            "  var touch2 = new Touch({identifier: t, target: el, clientX: window.innerWidth/2, clientY: endY, pageX: window.innerWidth/2, pageY: endY});" +
-            "  el.dispatchEvent(new TouchEvent('touchmove', {touches:[touch2], changedTouches:[touch2], bubbles:true}));" +
-            "  el.dispatchEvent(new TouchEvent('touchend', {touches:[], changedTouches:[touch2], bubbles:true}));" +
-            "}" +
-
-            // Listen for keyboard events (D-pad maps to arrow keys)
-            "document.addEventListener('keydown', function(e) {" +
-            "  if (e.key === 'ArrowDown') {" +
-            "    e.preventDefault();" +
-            "    simulateSwipe(window.innerHeight * 0.7, window.innerHeight * 0.1);" + // swipe up = next video
-            "  } else if (e.key === 'ArrowUp') {" +
-            "    e.preventDefault();" +
-            "    simulateSwipe(window.innerHeight * 0.3, window.innerHeight * 0.9);" + // swipe down = prev video
+            "  var t = Date.now();" +
+            "  function mkTouch(id, y) {" +
+            "    return new Touch({identifier:id, target:el, clientX:window.innerWidth/2, clientY:y, pageX:window.innerWidth/2, pageY:y});" +
             "  }" +
+            "  var t1 = mkTouch(t, startY);" +
+            "  el.dispatchEvent(new TouchEvent('touchstart', {touches:[t1], changedTouches:[t1], bubbles:true}));" +
+            "  var t2 = mkTouch(t, (startY+endY)/2);" +
+            "  el.dispatchEvent(new TouchEvent('touchmove', {touches:[t2], changedTouches:[t2], bubbles:true}));" +
+            "  var t3 = mkTouch(t, endY);" +
+            "  el.dispatchEvent(new TouchEvent('touchend', {touches:[], changedTouches:[t3], bubbles:true}));" +
+            "}" +
+            "window.__swipe = simulateSwipe;" +
+
+            // D-pad arrow key listener
+            "document.addEventListener('keydown', function(e) {" +
+            "  if (e.key === 'ArrowDown') { e.preventDefault(); simulateSwipe(window.innerHeight*0.7, window.innerHeight*0.1); }" +
+            "  else if (e.key === 'ArrowUp') { e.preventDefault(); simulateSwipe(window.innerHeight*0.3, window.innerHeight*0.9); }" +
             "}, true);" +
+
             "})();";
 
         webView.loadUrl(js);
@@ -160,31 +191,18 @@ public class MainActivity extends Activity {
     public boolean onKeyDown(int keyCode, KeyEvent event) {
         switch (keyCode) {
             case KeyEvent.KEYCODE_DPAD_DOWN:
-                // Next video - simulate swipe up
-                webView.loadUrl("javascript:simulateSwipe(window.innerHeight*0.7, window.innerHeight*0.1)");
+                webView.loadUrl("javascript:window.__swipe && window.__swipe(window.innerHeight*0.7, window.innerHeight*0.1)");
                 return true;
-
             case KeyEvent.KEYCODE_DPAD_UP:
-                // Previous video - simulate swipe down
-                webView.loadUrl("javascript:simulateSwipe(window.innerHeight*0.3, window.innerHeight*0.9)");
+                webView.loadUrl("javascript:window.__swipe && window.__swipe(window.innerHeight*0.3, window.innerHeight*0.9)");
                 return true;
-
             case KeyEvent.KEYCODE_DPAD_CENTER:
             case KeyEvent.KEYCODE_ENTER:
-                // Play/pause - tap centre of screen
-                webView.loadUrl("javascript:(function(){" +
-                    "var el = document.elementFromPoint(window.innerWidth/2, window.innerHeight/2);" +
-                    "if(el){el.click();}" +
-                    "})()");
+                webView.loadUrl("javascript:(function(){var el=document.elementFromPoint(window.innerWidth/2,window.innerHeight/2);if(el)el.click();})()");
                 return true;
-
             case KeyEvent.KEYCODE_BACK:
-                if (webView.canGoBack()) {
-                    webView.goBack();
-                    return true;
-                }
+                if (webView.canGoBack()) { webView.goBack(); return true; }
                 return super.onKeyDown(keyCode, event);
-
             default:
                 return super.onKeyDown(keyCode, event);
         }
@@ -194,7 +212,6 @@ public class MainActivity extends Activity {
     protected void onPause() {
         super.onPause();
         webView.onPause();
-        // Save cookies on pause
         CookieManager.getInstance().flush();
     }
 
@@ -206,9 +223,7 @@ public class MainActivity extends Activity {
 
     @Override
     protected void onDestroy() {
-        if (webView != null) {
-            webView.destroy();
-        }
+        if (webView != null) webView.destroy();
         super.onDestroy();
     }
 }
