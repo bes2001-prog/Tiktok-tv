@@ -28,20 +28,22 @@ jobs:
           unzip -q /tmp/gradle.zip -d /opt/
           echo "/opt/gradle-8.4/bin" >> $GITHUB_PATH
 
-      - name: Decode keystore
-        run: echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > $HOME/tiktoktv.keystore
+      - name: Decode keystore into workspace
+        run: echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > tiktoktv.keystore
 
       - name: Build signed release APK
         run: gradle assembleRelease
         env:
           ANDROID_HOME: /usr/local/lib/android/sdk
-          KEYSTORE_PATH: ${{ github.workspace }}/../tiktoktv.keystore
+          KEYSTORE_PATH: tiktoktv.keystore
           KEY_STORE_PASSWORD: ${{ secrets.KEY_STORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
 
       - name: Rename APK
-        run: mv app/build/outputs/apk/release/app-release.apk app/build/outputs/apk/release/TikTokTV.apk
+        run: |
+          ls app/build/outputs/apk/release/
+          mv app/build/outputs/apk/release/app-release.apk app/build/outputs/apk/release/TikTokTV.apk
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
