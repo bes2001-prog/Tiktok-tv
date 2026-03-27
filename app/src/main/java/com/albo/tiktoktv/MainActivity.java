@@ -278,15 +278,15 @@ public class MainActivity extends Activity {
             // re-run our setup after every route change.
             "(function() {" +
             "  function onRouteChange() {" +
-            "    exitNavMode();" + // reset nav state on every page change
-            "    // Re-inject style if TikTok removed it
+            "    exitNavMode();" +
+            "" +
             "    if (!document.getElementById('__alboStyle')) {" +
             "      var s=document.createElement('style');" +
             "      s.id='__alboStyle';" +
             "      s.innerHTML='.__alboFocus{outline:3px solid #FE2C55!important;outline-offset:3px!important;border-radius:4px!important;z-index:99999!important;position:relative!important;}';" +
             "      document.head.appendChild(s);" +
             "    }" +
-            "    // Re-run popup dismissal for new page
+            "" +
             "    var pt=setInterval(dismissPopups,800);" +
             "    setTimeout(function(){clearInterval(pt);},10000);" +
             "  }" +
