@@ -173,139 +173,156 @@ public class MainActivity extends Activity {
     }
 
     private void injectJS() {
+        // Exact navigation JS from the version you said worked best
         String js = "javascript:(function() {" +
+            "if (window.__alboTV) return;" +
             "window.__alboTV = true;" +
 
-            // Anti-detection
-            "try{Object.defineProperty(navigator,'webdriver',{get:()=>undefined});}catch(e){}" +
-            "try{Object.defineProperty(navigator,'plugins',{get:()=>[" +
+            "try { Object.defineProperty(navigator,'webdriver',{get:()=>undefined}); } catch(e){}" +
+            "try { Object.defineProperty(navigator,'plugins',{get:()=>[" +
             "  {name:'Chrome PDF Plugin',filename:'internal-pdf-viewer'}," +
             "  {name:'Chrome PDF Viewer',filename:'mhjfbmdgcfjbbpaeojofohoefgiehjai'}," +
             "  {name:'Native Client',filename:'internal-nacl-plugin'}" +
-            "]});}catch(e){}" +
-            "try{Object.defineProperty(navigator,'languages',{get:()=>['en-GB','en-US','en']});}catch(e){}" +
-            "window.chrome=window.chrome||{runtime:{}};" +
+            "]}); } catch(e){}" +
+            "try { Object.defineProperty(navigator,'languages',{get:()=>['en-GB','en-US','en']}); } catch(e){}" +
+            "window.chrome = window.chrome || {runtime:{}};" +
 
-            // Focus highlight style
-            "var existing=document.getElementById('__alboStyle');" +
-            "if(existing)existing.remove();" +
-            "var s=document.createElement('style');" +
-            "s.id='__alboStyle';" +
-            "s.innerHTML='.__alboFocus{outline:3px solid #FE2C55!important;outline-offset:3px!important;border-radius:4px!important;z-index:99999!important;position:relative!important;}';" +
-            "document.head.appendChild(s);" +
+            "var FOCUSABLE = [" +
+            "  'a','button','input','select','textarea'," +
+            "  '[role=\"button\"]','[role=\"link\"]','[role=\"tab\"]'," +
+            "  '[tabindex]','[data-e2e]'" +
+            "].join(',');" +
 
-            // State - nav mode OFF by default, only LEFT/RIGHT enters it
-            "window.__focusIdx=-1;" +
-            "window.__navMode=false;" +
+            "var styleEl = document.createElement('style');" +
+            "styleEl.innerHTML = '.__alboFocus { outline: 3px solid #FE2C55 !important; outline-offset: 2px !important; border-radius: 4px !important; }';" +
+            "document.head.appendChild(styleEl);" +
 
-            "var SEL='a[href],button,input,select,[role=\"button\"],[role=\"link\"],[role=\"tab\"],[role=\"menuitem\"],[tabindex]:not([tabindex=\"-1\"])';" +
+            "window.__focusIdx = -1;" +
+            "window.__focusMode = false;" +
 
-            "function getEls(){" +
-            "  return Array.from(document.querySelectorAll(SEL)).filter(function(el){" +
-            "    if(el.offsetWidth===0||el.offsetHeight===0)return false;" +
-            "    if(el.disabled)return false;" +
-            "    var r=el.getBoundingClientRect();" +
-            "    return r.width>0&&r.height>0;" +
+            "function getFocusable() {" +
+            "  var all = Array.from(document.querySelectorAll(FOCUSABLE));" +
+            "  return all.filter(function(el) {" +
+            "    var r = el.getBoundingClientRect();" +
+            "    return r.width > 0 && r.height > 0 && " +
+            "           r.top >= -50 && r.bottom <= window.innerHeight + 50;" +
             "  });" +
             "}" +
 
-            "function clearHL(){document.querySelectorAll('.__alboFocus').forEach(function(e){e.classList.remove('__alboFocus');});}" +
-
-            "function moveFocus(delta){" +
-            "  var els=getEls();" +
-            "  if(!els.length)return;" +
-            "  var next=window.__focusIdx+delta;" +
-            "  next=Math.max(0,Math.min(next,els.length-1));" +
-            "  window.__focusIdx=next;" +
-            "  clearHL();" +
-            "  els[next].classList.add('__alboFocus');" +
-            "  els[next].scrollIntoView({block:'nearest',inline:'nearest'});" +
-            "  els[next].focus();" +
+            "function clearFocus() {" +
+            "  document.querySelectorAll('.__alboFocus').forEach(function(el){" +
+            "    el.classList.remove('__alboFocus');" +
+            "  });" +
             "}" +
 
-            "function enterNavMode(){" +
-            "  window.__navMode=true;" +
-            "  if(window.__focusIdx<0)window.__focusIdx=0;" +
-            "  moveFocus(0);" +
+            "function focusEl(idx) {" +
+            "  var els = getFocusable();" +
+            "  if (!els.length) return;" +
+            "  idx = Math.max(0, Math.min(idx, els.length-1));" +
+            "  window.__focusIdx = idx;" +
+            "  clearFocus();" +
+            "  var el = els[idx];" +
+            "  el.classList.add('__alboFocus');" +
+            "  el.scrollIntoView({block:'nearest', inline:'nearest'});" +
+            "  el.focus();" +
             "}" +
 
-            "function exitNavMode(){" +
-            "  window.__navMode=false;" +
-            "  window.__focusIdx=-1;" +
-            "  clearHL();" +
-            "}" +
-
-            "function clickFocused(){" +
-            "  var els=getEls();" +
-            "  if(window.__focusIdx>=0&&els[window.__focusIdx]){" +
-            "    var el=els[window.__focusIdx];" +
-            "    el.click();" +
-            "    el.dispatchEvent(new MouseEvent('mousedown',{bubbles:true}));" +
-            "    el.dispatchEvent(new MouseEvent('mouseup',{bubbles:true}));" +
+            "function clickFocused() {" +
+            "  var els = getFocusable();" +
+            "  if (window.__focusIdx >= 0 && window.__focusIdx < els.length) {" +
+            "    els[window.__focusIdx].click();" +
             "  }" +
             "}" +
 
-            // Scroll helpers - always available
-            "window.__scrollNext=function(){window.scrollBy({top:window.innerHeight*0.9,behavior:'smooth'});};" +
-            "window.__scrollPrev=function(){window.scrollBy({top:-window.innerHeight*0.9,behavior:'smooth'});};" +
+            "window.__scrollToNext = function() {" +
+            "  window.scrollBy({top: window.innerHeight, behavior: 'smooth'});" +
+            "};" +
+            "window.__scrollToPrev = function() {" +
+            "  window.scrollBy({top: -window.innerHeight, behavior: 'smooth'});" +
+            "};" +
 
-            // Hook SPA router so nav resets on page changes
-            "function onRoute(){exitNavMode();}" +
-            "var _push=history.pushState.bind(history);" +
-            "history.pushState=function(){_push.apply(history,arguments);onRoute();};" +
-            "var _rep=history.replaceState.bind(history);" +
-            "history.replaceState=function(){_rep.apply(history,arguments);onRoute();};" +
-            "window.addEventListener('popstate',onRoute);" +
-
-            // Key handler - UP/DOWN ALWAYS scroll, LEFT/RIGHT navigate icons
-            "document.addEventListener('keydown',function(e){" +
-
-            // UP / DOWN = always scroll videos, no matter what
-            "  if(e.key==='ArrowDown'){e.preventDefault();e.stopPropagation();window.__scrollNext();return;}" +
-            "  if(e.key==='ArrowUp'){e.preventDefault();e.stopPropagation();window.__scrollPrev();return;}" +
-
-            // LEFT / RIGHT = navigate icons (enters nav mode automatically)
-            "  if(e.key==='ArrowRight'){e.preventDefault();e.stopPropagation();if(!window.__navMode)enterNavMode();else moveFocus(1);return;}" +
-            "  if(e.key==='ArrowLeft'){e.preventDefault();e.stopPropagation();if(!window.__navMode)enterNavMode();else moveFocus(-1);return;}" +
-
-            // ENTER = click focused icon OR play/pause video
-            "  if(e.key==='Enter'){" +
-            "    e.preventDefault();e.stopPropagation();" +
-            "    if(window.__navMode){clickFocused();}" +
-            "    else{var el=document.elementFromPoint(window.innerWidth/2,window.innerHeight/2);if(el)el.click();}" +
+            "document.addEventListener('keydown', function(e) {" +
+            "  if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {" +
+            "    e.preventDefault();" +
+            "    if (!window.__focusMode) {" +
+            "      window.__focusMode = true;" +
+            "      window.__focusIdx = -1;" +
+            "    }" +
+            "    if (e.key === 'ArrowRight') {" +
+            "      focusEl(window.__focusIdx + 1);" +
+            "    } else {" +
+            "      focusEl(window.__focusIdx - 1);" +
+            "    }" +
             "    return;" +
             "  }" +
+            "  if (e.key === 'ArrowDown') {" +
+            "    e.preventDefault();" +
+            "    if (window.__focusMode) {" +
+            "      focusEl(window.__focusIdx + 1);" +
+            "    } else {" +
+            "      window.__scrollToNext();" +
+            "    }" +
+            "    return;" +
+            "  }" +
+            "  if (e.key === 'ArrowUp') {" +
+            "    e.preventDefault();" +
+            "    if (window.__focusMode) {" +
+            "      focusEl(window.__focusIdx - 1);" +
+            "    } else {" +
+            "      window.__scrollToPrev();" +
+            "    }" +
+            "    return;" +
+            "  }" +
+            "  if (e.key === 'Enter') {" +
+            "    e.preventDefault();" +
+            "    if (window.__focusMode) {" +
+            "      clickFocused();" +
+            "    } else {" +
+            "      var el = document.elementFromPoint(window.innerWidth/2, window.innerHeight/2);" +
+            "      if (el) el.click();" +
+            "    }" +
+            "    return;" +
+            "  }" +
+            "  if (e.key === 'Escape' || e.key === 'Backspace') {" +
+            "    if (window.__focusMode) {" +
+            "      e.preventDefault();" +
+            "      window.__focusMode = false;" +
+            "      clearFocus();" +
+            "      window.__focusIdx = -1;" +
+            "    }" +
+            "    return;" +
+            "  }" +
+            "}, true);" +
 
-            // ESCAPE = exit nav mode back to scroll
-            "  if(e.key==='Escape'){e.preventDefault();exitNavMode();return;}" +
-
-            "},true);" +
-
-            // Ad removal
-            "function removeAds(){" +
-            "  document.querySelectorAll('*').forEach(function(el){" +
-            "    if(el.children.length===0&&el.innerText&&el.innerText.trim()==='Sponsored'){" +
-            "      var c=el.closest('[class*=\"DivItemContainer\"]')||el.closest('article')||el.parentElement;" +
-            "      if(c)c.style.display='none';" +
+            "function removeAds() {" +
+            "  document.querySelectorAll('*').forEach(function(el) {" +
+            "    if (el.children.length === 0 && el.innerText && " +
+            "        el.innerText.trim() === 'Sponsored') {" +
+            "      var card = el.closest('[class*=\"DivItemContainer\"]') || " +
+            "                  el.closest('article') || el.parentElement;" +
+            "      if (card) card.style.display = 'none';" +
             "    }" +
             "  });" +
             "}" +
             "removeAds();" +
             "new MutationObserver(removeAds).observe(document.body,{childList:true,subtree:true});" +
 
-            // Popup dismissal
-            "function dismissPopups(){" +
-            "  ['[data-e2e=\"cookie-banner\"] button','[data-e2e=\"modal-close-inner-button\"]'," +
-            "   'button[class*=\"decline\"]','[aria-label=\"Close\"]','[aria-label=\"Dismiss\"]'" +
-            "  ].forEach(function(sel){" +
-            "    document.querySelectorAll(sel).forEach(function(btn){" +
-            "      var t=(btn.innerText||'').toLowerCase().trim();" +
-            "      if(!t||t==='x'||t.includes('decline')||t.includes('close')||t.includes('later'))btn.click();" +
+            "function dismissPopups() {" +
+            "  ['[data-e2e=\"cookie-banner\"] button'," +
+            "   '[data-e2e=\"modal-close-inner-button\"]'," +
+            "   'button[class*=\"decline\"]','button[class*=\"reject\"]'," +
+            "   '[aria-label=\"Close\"]','[aria-label=\"Dismiss\"]'" +
+            "  ].forEach(function(sel) {" +
+            "    document.querySelectorAll(sel).forEach(function(btn) {" +
+            "      var txt = (btn.innerText||'').toLowerCase().trim();" +
+            "      if (!txt||txt==='x'||txt.includes('decline')||txt.includes('close')||" +
+            "          txt.includes('later')||txt.includes('dismiss')) btn.click();" +
             "    });" +
             "  });" +
             "}" +
             "dismissPopups();" +
-            "var _pt=setInterval(dismissPopups,800);setTimeout(function(){clearInterval(_pt);},15000);" +
+            "var pt = setInterval(dismissPopups, 800);" +
+            "setTimeout(function(){clearInterval(pt);}, 15000);" +
 
         "})();";
 
@@ -315,70 +332,30 @@ public class MainActivity extends Activity {
     @Override
     public boolean onKeyDown(int keyCode, KeyEvent event) {
         switch (keyCode) {
-            // UP/DOWN always scroll - simple and reliable
             case KeyEvent.KEYCODE_DPAD_DOWN:
             case KeyEvent.KEYCODE_PAGE_DOWN:
-                webView.loadUrl("javascript:window.__scrollNext&&window.__scrollNext();");
+                webView.loadUrl("javascript:(function(){if(window.__focusMode){  var els=document.querySelectorAll('a,button,input,[role=\"button\"],[data-e2e]');  window.__focusIdx=Math.min(window.__focusIdx+1,els.length-1);  if(els[window.__focusIdx]){els[window.__focusIdx].classList.add('__alboFocus');els[window.__focusIdx].focus();}} else { window.__scrollToNext && window.__scrollToNext(); }})()");
                 return true;
-
             case KeyEvent.KEYCODE_DPAD_UP:
             case KeyEvent.KEYCODE_PAGE_UP:
-                webView.loadUrl("javascript:window.__scrollPrev&&window.__scrollPrev();");
+                webView.loadUrl("javascript:(function(){if(window.__focusMode){  window.__focusIdx=Math.max(window.__focusIdx-1,0);} else { window.__scrollToPrev && window.__scrollToPrev(); }})()");
                 return true;
-
-            // LEFT/RIGHT navigate icons
-            case KeyEvent.KEYCODE_DPAD_RIGHT:
-                webView.loadUrl("javascript:(function(){" +
-                    "if(!window.__navMode){window.__navMode=true;window.__focusIdx=0;}" +
-                    "else window.__focusIdx++;" +
-                    "var els=Array.from(document.querySelectorAll('a[href],button,[role=\"button\"],[tabindex]')).filter(e=>e.offsetWidth>0&&e.offsetHeight>0);" +
-                    "window.__focusIdx=Math.min(window.__focusIdx,els.length-1);" +
-                    "document.querySelectorAll('.__alboFocus').forEach(e=>e.classList.remove('__alboFocus'));" +
-                    "if(els[window.__focusIdx]){els[window.__focusIdx].classList.add('__alboFocus');els[window.__focusIdx].scrollIntoView({block:'nearest'});els[window.__focusIdx].focus();}" +
-                "})()");
-                return true;
-
             case KeyEvent.KEYCODE_DPAD_LEFT:
-                webView.loadUrl("javascript:(function(){" +
-                    "if(!window.__navMode){window.__navMode=true;window.__focusIdx=0;}" +
-                    "else window.__focusIdx=Math.max(window.__focusIdx-1,0);" +
-                    "var els=Array.from(document.querySelectorAll('a[href],button,[role=\"button\"],[tabindex]')).filter(e=>e.offsetWidth>0&&e.offsetHeight>0);" +
-                    "document.querySelectorAll('.__alboFocus').forEach(e=>e.classList.remove('__alboFocus'));" +
-                    "if(els[window.__focusIdx]){els[window.__focusIdx].classList.add('__alboFocus');els[window.__focusIdx].scrollIntoView({block:'nearest'});els[window.__focusIdx].focus();}" +
-                "})()");
+                webView.loadUrl("javascript:(function(){window.__focusMode=true;if(window.__focusIdx<0) window.__focusIdx=0;else window.__focusIdx=Math.max(window.__focusIdx-1,0);var els=document.querySelectorAll('a,button,[role=\"button\"],[data-e2e]');document.querySelectorAll('.__alboFocus').forEach(function(e){e.classList.remove('__alboFocus');});if(els[window.__focusIdx]){els[window.__focusIdx].classList.add('__alboFocus');els[window.__focusIdx].scrollIntoView({block:'nearest'});els[window.__focusIdx].focus();}})()");
                 return true;
-
-            // OK/Enter - click icon or play/pause
+            case KeyEvent.KEYCODE_DPAD_RIGHT:
+                webView.loadUrl("javascript:(function(){window.__focusMode=true;if(window.__focusIdx<0) window.__focusIdx=0;else window.__focusIdx=window.__focusIdx+1;var els=document.querySelectorAll('a,button,[role=\"button\"],[data-e2e]');window.__focusIdx=Math.min(window.__focusIdx,els.length-1);document.querySelectorAll('.__alboFocus').forEach(function(e){e.classList.remove('__alboFocus');});if(els[window.__focusIdx]){els[window.__focusIdx].classList.add('__alboFocus');els[window.__focusIdx].scrollIntoView({block:'nearest'});els[window.__focusIdx].focus();}})()");
+                return true;
             case KeyEvent.KEYCODE_DPAD_CENTER:
             case KeyEvent.KEYCODE_ENTER:
-                webView.loadUrl("javascript:(function(){" +
-                    "if(window.__navMode){" +
-                    "  var els=Array.from(document.querySelectorAll('a[href],button,[role=\"button\"],[tabindex]')).filter(e=>e.offsetWidth>0&&e.offsetHeight>0);" +
-                    "  if(els[window.__focusIdx]){" +
-                    "    els[window.__focusIdx].click();" +
-                    "    els[window.__focusIdx].dispatchEvent(new MouseEvent('mousedown',{bubbles:true}));" +
-                    "    els[window.__focusIdx].dispatchEvent(new MouseEvent('mouseup',{bubbles:true}));" +
-                    "  }" +
-                    "}else{" +
-                    "  var el=document.elementFromPoint(window.innerWidth/2,window.innerHeight/2);" +
-                    "  if(el)el.click();" +
-                    "}" +
-                "})()");
+                webView.loadUrl("javascript:(function(){if(window.__focusMode){  var els=document.querySelectorAll('a,button,[role=\"button\"],[data-e2e]');  if(els[window.__focusIdx]) els[window.__focusIdx].click();} else {  var el=document.elementFromPoint(window.innerWidth/2,window.innerHeight/2);  if(el) el.click();}})()");
                 return true;
-
-            // Back - exit nav mode first, then go back
             case KeyEvent.KEYCODE_BACK:
-                webView.loadUrl("javascript:(function(){" +
-                    "if(window.__navMode){" +
-                    "  window.__navMode=false;window.__focusIdx=-1;" +
-                    "  document.querySelectorAll('.__alboFocus').forEach(e=>e.classList.remove('__alboFocus'));" +
-                    "}" +
-                "})()");
+                webView.loadUrl("javascript:(function(){if(window.__focusMode){  window.__focusMode=false;  window.__focusIdx=-1;  document.querySelectorAll('.__alboFocus').forEach(function(e){e.classList.remove('__alboFocus');});}})()");
                 if (webView.canGoBack()) {
                     webView.goBack();
                 }
                 return true;
-
             default:
                 return super.onKeyDown(keyCode, event);
         }
