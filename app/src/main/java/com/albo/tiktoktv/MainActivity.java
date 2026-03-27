@@ -37,6 +37,9 @@ public class MainActivity extends Activity {
         "bytetracking.com", "byteoversea.com"
     );
 
+    // The full JS we inject - built once and reused
+    private String injectedJS = null;
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -106,7 +109,8 @@ public class MainActivity extends Activity {
             public void onPageFinished(WebView view, String url) {
                 super.onPageFinished(view, url);
                 progressBar.setVisibility(View.GONE);
-                injectJS();
+                // Full re-inject on every page load (covers hard navigations)
+                injectJS(true);
             }
         });
 
@@ -127,179 +131,201 @@ public class MainActivity extends Activity {
         webView.requestFocus();
     }
 
-    private void injectJS() {
+    /**
+     * Builds and injects JS.
+     * forceReinject = true on full page loads (clears __alboTV flag)
+     * forceReinject = false when called from key events (only reinjects if not present)
+     */
+    private void injectJS(boolean forceReinject) {
+
+        // The core JS - runs once per page but survives SPA navigation via history API hooks
         String js = "javascript:(function() {" +
+
+            // On full page reload, always re-run
+            (forceReinject ? "window.__alboTV = false;" : "") +
+
             "if (window.__alboTV) return;" +
             "window.__alboTV = true;" +
 
-            // --- Anti-detection ---
-            "try { Object.defineProperty(navigator,'webdriver',{get:()=>undefined}); } catch(e){}" +
-            "try { Object.defineProperty(navigator,'plugins',{get:()=>[" +
+            // ===================== ANTI-DETECTION =====================
+            "try{Object.defineProperty(navigator,'webdriver',{get:()=>undefined});}catch(e){}" +
+            "try{Object.defineProperty(navigator,'plugins',{get:()=>[" +
             "  {name:'Chrome PDF Plugin',filename:'internal-pdf-viewer'}," +
             "  {name:'Chrome PDF Viewer',filename:'mhjfbmdgcfjbbpaeojofohoefgiehjai'}," +
             "  {name:'Native Client',filename:'internal-nacl-plugin'}" +
-            "]}); } catch(e){}" +
-            "try { Object.defineProperty(navigator,'languages',{get:()=>['en-GB','en-US','en']}); } catch(e){}" +
-            "window.chrome = window.chrome || {runtime:{}};" +
+            "]});}catch(e){}" +
+            "try{Object.defineProperty(navigator,'languages',{get:()=>['en-GB','en-US','en']});}catch(e){}" +
+            "window.chrome=window.chrome||{runtime:{}};" +
 
-            // --- TV Navigation System ---
-            // All clickable elements TikTok uses
-            "var FOCUSABLE = [" +
-            "  'a','button','input','select','textarea'," +
-            "  '[role=\"button\"]','[role=\"link\"]','[role=\"tab\"]'," +
-            "  '[tabindex]','[data-e2e]'" +
+            // ===================== FOCUS STYLE =====================
+            "if (!document.getElementById('__alboStyle')) {" +
+            "  var s=document.createElement('style');" +
+            "  s.id='__alboStyle';" +
+            "  s.innerHTML='.__alboFocus{outline:3px solid #FE2C55!important;outline-offset:3px!important;border-radius:4px!important;z-index:99999!important;position:relative!important;}';" +
+            "  document.head.appendChild(s);" +
+            "}" +
+
+            // ===================== STATE =====================
+            "window.__focusIdx = -1;" +
+            "window.__focusMode = false;" +
+
+            // ===================== FOCUSABLE ELEMENTS =====================
+            // Broad selector to catch everything on any TikTok page/overlay/modal
+            "var FOCUSABLE_SEL = [" +
+            "  'a[href]','button','input','select','textarea'," +
+            "  '[role=\"button\"]','[role=\"link\"]','[role=\"tab\"]','[role=\"menuitem\"]'," +
+            "  '[role=\"option\"]','[role=\"checkbox\"]','[role=\"radio\"]'," +
+            "  '[tabindex]:not([tabindex=\"-1\"])'" +
             "].join(',');" +
 
-            // Highlight style injected once
-            "var styleEl = document.createElement('style');" +
-            "styleEl.innerHTML = '.__alboFocus { outline: 3px solid #FE2C55 !important; outline-offset: 2px !important; border-radius: 4px !important; }';" +
-            "document.head.appendChild(styleEl);" +
-
-            // Current focused element index
-            "window.__focusIdx = -1;" +
-            "window.__focusMode = false;" + // false = scroll mode, true = nav mode
-
-            // Get all visible focusable elements
             "function getFocusable() {" +
-            "  var all = Array.from(document.querySelectorAll(FOCUSABLE));" +
-            "  return all.filter(function(el) {" +
-            "    var r = el.getBoundingClientRect();" +
-            "    return r.width > 0 && r.height > 0 && " +
-            "           r.top >= -50 && r.bottom <= window.innerHeight + 50;" +
+            "  return Array.from(document.querySelectorAll(FOCUSABLE_SEL)).filter(function(el) {" +
+            "    if (el.offsetWidth===0 || el.offsetHeight===0) return false;" +
+            "    if (el.style.display==='none' || el.style.visibility==='hidden') return false;" +
+            "    if (el.disabled) return false;" +
+            "    var r=el.getBoundingClientRect();" +
+            "    return r.width>0 && r.height>0;" +
             "  });" +
             "}" +
 
-            // Clear all highlights
             "function clearFocus() {" +
             "  document.querySelectorAll('.__alboFocus').forEach(function(el){" +
             "    el.classList.remove('__alboFocus');" +
             "  });" +
             "}" +
 
-            // Focus element at index
             "function focusEl(idx) {" +
-            "  var els = getFocusable();" +
+            "  var els=getFocusable();" +
             "  if (!els.length) return;" +
-            "  idx = Math.max(0, Math.min(idx, els.length-1));" +
-            "  window.__focusIdx = idx;" +
+            "  idx=Math.max(0,Math.min(idx,els.length-1));" +
+            "  window.__focusIdx=idx;" +
             "  clearFocus();" +
-            "  var el = els[idx];" +
+            "  var el=els[idx];" +
             "  el.classList.add('__alboFocus');" +
-            "  el.scrollIntoView({block:'nearest', inline:'nearest'});" +
+            "  el.scrollIntoView({block:'nearest',inline:'nearest'});" +
             "  el.focus();" +
             "}" +
 
-            // Click currently focused element
             "function clickFocused() {" +
-            "  var els = getFocusable();" +
-            "  if (window.__focusIdx >= 0 && window.__focusIdx < els.length) {" +
-            "    els[window.__focusIdx].click();" +
+            "  var els=getFocusable();" +
+            "  if (window.__focusIdx>=0 && window.__focusIdx<els.length) {" +
+            "    var el=els[window.__focusIdx];" +
+            "    el.click();" +
+            "    el.dispatchEvent(new MouseEvent('mousedown',{bubbles:true}));" +
+            "    el.dispatchEvent(new MouseEvent('mouseup',{bubbles:true}));" +
             "  }" +
             "}" +
 
-            // --- Scroll mode (default - up/down moves between videos) ---
-            "window.__scrollToNext = function() {" +
-            "  window.scrollBy({top: window.innerHeight, behavior: 'smooth'});" +
-            "};" +
-            "window.__scrollToPrev = function() {" +
-            "  window.scrollBy({top: -window.innerHeight, behavior: 'smooth'});" +
-            "};" +
+            "function exitNavMode() {" +
+            "  window.__focusMode=false;" +
+            "  window.__focusIdx=-1;" +
+            "  clearFocus();" +
+            "}" +
 
-            // --- Key handler ---
-            // UP/DOWN = scroll videos (scroll mode) or navigate elements (nav mode)
-            // LEFT/RIGHT = always navigate elements (enters nav mode automatically)
-            // OK/Enter = click focused element or play/pause
-            // BACK exits nav mode back to scroll mode
-            "document.addEventListener('keydown', function(e) {" +
+            // ===================== SCROLL (video mode) =====================
+            "window.__scrollToNext=function(){window.scrollBy({top:window.innerHeight,behavior:'smooth'});};" +
+            "window.__scrollToPrev=function(){window.scrollBy({top:-window.innerHeight,behavior:'smooth'});};" +
 
-            "  if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {" +
-            "    e.preventDefault();" +
-            "    if (!window.__focusMode) {" +
-            "      window.__focusMode = true;" +
-            "      window.__focusIdx = -1;" +
-            "    }" +
-            "    if (e.key === 'ArrowRight') {" +
-            "      focusEl(window.__focusIdx + 1);" +
-            "    } else {" +
-            "      focusEl(window.__focusIdx - 1);" +
-            "    }" +
+            // ===================== KEY HANDLER =====================
+            "document.addEventListener('keydown',function(e){" +
+
+            // LEFT / RIGHT — enter nav mode, move between elements
+            "  if(e.key==='ArrowLeft'||e.key==='ArrowRight'){" +
+            "    e.preventDefault();e.stopPropagation();" +
+            "    if(!window.__focusMode){window.__focusMode=true;window.__focusIdx=-1;}" +
+            "    focusEl(e.key==='ArrowRight'?window.__focusIdx+1:window.__focusIdx-1);" +
             "    return;" +
             "  }" +
 
-            "  if (e.key === 'ArrowDown') {" +
-            "    e.preventDefault();" +
-            "    if (window.__focusMode) {" +
-            "      focusEl(window.__focusIdx + 1);" +
-            "    } else {" +
-            "      window.__scrollToNext();" +
-            "    }" +
+            // UP / DOWN — scroll videos OR navigate in nav mode
+            "  if(e.key==='ArrowDown'){" +
+            "    e.preventDefault();e.stopPropagation();" +
+            "    if(window.__focusMode) focusEl(window.__focusIdx+1);" +
+            "    else window.__scrollToNext();" +
+            "    return;" +
+            "  }" +
+            "  if(e.key==='ArrowUp'){" +
+            "    e.preventDefault();e.stopPropagation();" +
+            "    if(window.__focusMode) focusEl(window.__focusIdx-1);" +
+            "    else window.__scrollToPrev();" +
             "    return;" +
             "  }" +
 
-            "  if (e.key === 'ArrowUp') {" +
-            "    e.preventDefault();" +
-            "    if (window.__focusMode) {" +
-            "      focusEl(window.__focusIdx - 1);" +
-            "    } else {" +
-            "      window.__scrollToPrev();" +
-            "    }" +
-            "    return;" +
-            "  }" +
-
-            "  if (e.key === 'Enter') {" +
-            "    e.preventDefault();" +
-            "    if (window.__focusMode) {" +
+            // ENTER — click focused or play/pause
+            "  if(e.key==='Enter'){" +
+            "    e.preventDefault();e.stopPropagation();" +
+            "    if(window.__focusMode){" +
             "      clickFocused();" +
             "    } else {" +
-            "      var el = document.elementFromPoint(window.innerWidth/2, window.innerHeight/2);" +
-            "      if (el) el.click();" +
+            "      var el=document.elementFromPoint(window.innerWidth/2,window.innerHeight/2);" +
+            "      if(el) el.click();" +
             "    }" +
             "    return;" +
             "  }" +
 
-            "  if (e.key === 'Escape' || e.key === 'Backspace') {" +
-            "    if (window.__focusMode) {" +
-            "      e.preventDefault();" +
-            "      window.__focusMode = false;" +
-            "      clearFocus();" +
-            "      window.__focusIdx = -1;" +
-            "    }" +
+            // ESCAPE / BACK — exit nav mode
+            "  if(e.key==='Escape'){" +
+            "    e.preventDefault();" +
+            "    exitNavMode();" +
             "    return;" +
             "  }" +
 
-            "}, true);" +
+            "},true);" + // useCapture=true so we catch events before TikTok does
 
-            // --- Ad removal ---
-            "function removeAds() {" +
-            "  document.querySelectorAll('*').forEach(function(el) {" +
-            "    if (el.children.length === 0 && el.innerText && " +
-            "        el.innerText.trim() === 'Sponsored') {" +
-            "      var card = el.closest('[class*=\"DivItemContainer\"]') || " +
-            "                 el.closest('article') || el.parentElement;" +
-            "      if (card) card.style.display = 'none';" +
+            // ===================== SPA NAVIGATION HOOK =====================
+            // TikTok is a single-page app — sub-pages and overlays don't trigger
+            // onPageFinished. We hook pushState/replaceState and popstate to
+            // re-run our setup after every route change.
+            "(function() {" +
+            "  function onRouteChange() {" +
+            "    exitNavMode();" + // reset nav state on every page change
+            "    // Re-inject style if TikTok removed it
+            "    if (!document.getElementById('__alboStyle')) {" +
+            "      var s=document.createElement('style');" +
+            "      s.id='__alboStyle';" +
+            "      s.innerHTML='.__alboFocus{outline:3px solid #FE2C55!important;outline-offset:3px!important;border-radius:4px!important;z-index:99999!important;position:relative!important;}';" +
+            "      document.head.appendChild(s);" +
+            "    }" +
+            "    // Re-run popup dismissal for new page
+            "    var pt=setInterval(dismissPopups,800);" +
+            "    setTimeout(function(){clearInterval(pt);},10000);" +
+            "  }" +
+            "  var origPush=history.pushState.bind(history);" +
+            "  history.pushState=function(){origPush.apply(history,arguments);onRouteChange();};" +
+            "  var origReplace=history.replaceState.bind(history);" +
+            "  history.replaceState=function(){origReplace.apply(history,arguments);onRouteChange();};" +
+            "  window.addEventListener('popstate',onRouteChange);" +
+            "})();" +
+
+            // ===================== AD REMOVAL =====================
+            "function removeAds(){" +
+            "  document.querySelectorAll('*').forEach(function(el){" +
+            "    if(el.children.length===0&&el.innerText&&el.innerText.trim()==='Sponsored'){" +
+            "      var card=el.closest('[class*=\"DivItemContainer\"]')||el.closest('article')||el.parentElement;" +
+            "      if(card) card.style.display='none';" +
             "    }" +
             "  });" +
             "}" +
             "removeAds();" +
             "new MutationObserver(removeAds).observe(document.body,{childList:true,subtree:true});" +
 
-            // --- Popup dismissal ---
-            "function dismissPopups() {" +
+            // ===================== POPUP DISMISSAL =====================
+            "function dismissPopups(){" +
             "  ['[data-e2e=\"cookie-banner\"] button'," +
             "   '[data-e2e=\"modal-close-inner-button\"]'," +
             "   'button[class*=\"decline\"]','button[class*=\"reject\"]'," +
             "   '[aria-label=\"Close\"]','[aria-label=\"Dismiss\"]'" +
-            "  ].forEach(function(sel) {" +
-            "    document.querySelectorAll(sel).forEach(function(btn) {" +
-            "      var txt = (btn.innerText||'').toLowerCase().trim();" +
-            "      if (!txt||txt==='x'||txt.includes('decline')||txt.includes('close')||" +
-            "          txt.includes('later')||txt.includes('dismiss')) btn.click();" +
+            "  ].forEach(function(sel){" +
+            "    document.querySelectorAll(sel).forEach(function(btn){" +
+            "      var txt=(btn.innerText||'').toLowerCase().trim();" +
+            "      if(!txt||txt==='x'||txt.includes('decline')||txt.includes('close')||" +
+            "         txt.includes('later')||txt.includes('dismiss'))btn.click();" +
             "    });" +
             "  });" +
             "}" +
             "dismissPopups();" +
-            "var pt = setInterval(dismissPopups, 800);" +
-            "setTimeout(function(){clearInterval(pt);}, 15000);" +
+            "var pt=setInterval(dismissPopups,800);" +
+            "setTimeout(function(){clearInterval(pt);},15000);" +
 
         "})();";
 
@@ -311,74 +337,28 @@ public class MainActivity extends Activity {
         switch (keyCode) {
             case KeyEvent.KEYCODE_DPAD_DOWN:
             case KeyEvent.KEYCODE_PAGE_DOWN:
-                webView.loadUrl("javascript:(function(){" +
-                    "if(window.__focusMode){" +
-                    "  var els=document.querySelectorAll('a,button,input,[role=\"button\"],[data-e2e]');" +
-                    "  window.__focusIdx=Math.min(window.__focusIdx+1,els.length-1);" +
-                    "  if(els[window.__focusIdx]){els[window.__focusIdx].classList.add('__alboFocus');els[window.__focusIdx].focus();}" +
-                    "} else { window.__scrollToNext && window.__scrollToNext(); }" +
-                "})()");
+                webView.loadUrl("javascript:if(window.__focusMode){var els=document.querySelectorAll('a[href],button,[role=\"button\"],[tabindex]').values ? Array.from(document.querySelectorAll('a[href],button,[role=\"button\"]')).filter(e=>e.offsetWidth>0&&e.offsetHeight>0) : [];window.__focusIdx=Math.min((window.__focusIdx||0)+1,els.length-1);if(els[window.__focusIdx]){document.querySelectorAll('.__alboFocus').forEach(e=>e.classList.remove('__alboFocus'));els[window.__focusIdx].classList.add('__alboFocus');els[window.__focusIdx].scrollIntoView({block:'nearest'});}}else{window.__scrollToNext&&window.__scrollToNext();}");
                 return true;
-
             case KeyEvent.KEYCODE_DPAD_UP:
             case KeyEvent.KEYCODE_PAGE_UP:
-                webView.loadUrl("javascript:(function(){" +
-                    "if(window.__focusMode){" +
-                    "  window.__focusIdx=Math.max(window.__focusIdx-1,0);" +
-                    "} else { window.__scrollToPrev && window.__scrollToPrev(); }" +
-                "})()");
+                webView.loadUrl("javascript:if(window.__focusMode){var els=Array.from(document.querySelectorAll('a[href],button,[role=\"button\"]')).filter(e=>e.offsetWidth>0&&e.offsetHeight>0);window.__focusIdx=Math.max((window.__focusIdx||0)-1,0);if(els[window.__focusIdx]){document.querySelectorAll('.__alboFocus').forEach(e=>e.classList.remove('__alboFocus'));els[window.__focusIdx].classList.add('__alboFocus');els[window.__focusIdx].scrollIntoView({block:'nearest'});}}else{window.__scrollToPrev&&window.__scrollToPrev();}");
                 return true;
-
             case KeyEvent.KEYCODE_DPAD_LEFT:
-                webView.loadUrl("javascript:(function(){" +
-                    "window.__focusMode=true;" +
-                    "if(window.__focusIdx<0) window.__focusIdx=0;" +
-                    "else window.__focusIdx=Math.max(window.__focusIdx-1,0);" +
-                    "var els=document.querySelectorAll('a,button,[role=\"button\"],[data-e2e]');" +
-                    "document.querySelectorAll('.__alboFocus').forEach(function(e){e.classList.remove('__alboFocus');});" +
-                    "if(els[window.__focusIdx]){els[window.__focusIdx].classList.add('__alboFocus');els[window.__focusIdx].scrollIntoView({block:'nearest'});els[window.__focusIdx].focus();}" +
-                "})()");
+                webView.loadUrl("javascript:window.__focusMode=true;var els=Array.from(document.querySelectorAll('a[href],button,[role=\"button\"],[tabindex]')).filter(e=>e.offsetWidth>0&&e.offsetHeight>0);window.__focusIdx=Math.max((window.__focusIdx>=0?window.__focusIdx:1)-1,0);document.querySelectorAll('.__alboFocus').forEach(e=>e.classList.remove('__alboFocus'));if(els[window.__focusIdx]){els[window.__focusIdx].classList.add('__alboFocus');els[window.__focusIdx].scrollIntoView({block:'nearest'});els[window.__focusIdx].focus();}");
                 return true;
-
             case KeyEvent.KEYCODE_DPAD_RIGHT:
-                webView.loadUrl("javascript:(function(){" +
-                    "window.__focusMode=true;" +
-                    "if(window.__focusIdx<0) window.__focusIdx=0;" +
-                    "else window.__focusIdx=window.__focusIdx+1;" +
-                    "var els=document.querySelectorAll('a,button,[role=\"button\"],[data-e2e]');" +
-                    "window.__focusIdx=Math.min(window.__focusIdx,els.length-1);" +
-                    "document.querySelectorAll('.__alboFocus').forEach(function(e){e.classList.remove('__alboFocus');});" +
-                    "if(els[window.__focusIdx]){els[window.__focusIdx].classList.add('__alboFocus');els[window.__focusIdx].scrollIntoView({block:'nearest'});els[window.__focusIdx].focus();}" +
-                "})()");
+                webView.loadUrl("javascript:window.__focusMode=true;var els=Array.from(document.querySelectorAll('a[href],button,[role=\"button\"],[tabindex]')).filter(e=>e.offsetWidth>0&&e.offsetHeight>0);window.__focusIdx=Math.min((window.__focusIdx>=0?window.__focusIdx:-1)+1,els.length-1);document.querySelectorAll('.__alboFocus').forEach(e=>e.classList.remove('__alboFocus'));if(els[window.__focusIdx]){els[window.__focusIdx].classList.add('__alboFocus');els[window.__focusIdx].scrollIntoView({block:'nearest'});els[window.__focusIdx].focus();}");
                 return true;
-
             case KeyEvent.KEYCODE_DPAD_CENTER:
             case KeyEvent.KEYCODE_ENTER:
-                webView.loadUrl("javascript:(function(){" +
-                    "if(window.__focusMode){" +
-                    "  var els=document.querySelectorAll('a,button,[role=\"button\"],[data-e2e]');" +
-                    "  if(els[window.__focusIdx]) els[window.__focusIdx].click();" +
-                    "} else {" +
-                    "  var el=document.elementFromPoint(window.innerWidth/2,window.innerHeight/2);" +
-                    "  if(el) el.click();" +
-                    "}" +
-                "})()");
+                webView.loadUrl("javascript:if(window.__focusMode){var els=Array.from(document.querySelectorAll('a[href],button,[role=\"button\"],[tabindex]')).filter(e=>e.offsetWidth>0&&e.offsetHeight>0);if(els[window.__focusIdx]){var el=els[window.__focusIdx];el.click();el.dispatchEvent(new MouseEvent('mousedown',{bubbles:true}));el.dispatchEvent(new MouseEvent('mouseup',{bubbles:true}));}}else{var el=document.elementFromPoint(window.innerWidth/2,window.innerHeight/2);if(el)el.click();}");
                 return true;
-
             case KeyEvent.KEYCODE_BACK:
-                // Back exits nav mode first, then goes back in history
-                webView.loadUrl("javascript:(function(){" +
-                    "if(window.__focusMode){" +
-                    "  window.__focusMode=false;" +
-                    "  window.__focusIdx=-1;" +
-                    "  document.querySelectorAll('.__alboFocus').forEach(function(e){e.classList.remove('__alboFocus');});" +
-                    "}" +
-                "})()");
+                webView.loadUrl("javascript:if(window.__focusMode){window.__focusMode=false;window.__focusIdx=-1;document.querySelectorAll('.__alboFocus').forEach(e=>e.classList.remove('__alboFocus'));}");
                 if (webView.canGoBack()) {
                     webView.goBack();
                 }
                 return true;
-
             default:
                 return super.onKeyDown(keyCode, event);
         }
@@ -395,6 +375,8 @@ public class MainActivity extends Activity {
     protected void onResume() {
         super.onResume();
         webView.onResume();
+        // Re-inject on resume in case TikTok cleared our JS state
+        injectJS(false);
     }
 
     @Override
